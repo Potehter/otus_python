@@ -42,35 +42,60 @@ class Field(object):
         self.nullable = nullable
 
 class CharField(Field):
-    pass
+    def validate(self, value):
+        if not isinstance(value, str):
+            raise ValueError
 
 
 class ArgumentsField(Field):
-    pass
+    def validate(self, value):
+        if not isinstance(value, dict):
+            raise ValueError
 
 
 class EmailField(CharField):
-    pass
+    def validate(self, value):
+        if isinstance(value, str) and '@' in value:
+            pass
+        else:
+            raise ValueError
 
 
 class PhoneField(Field):
-    pass
+    def validate(self, value):
+        if not isinstance(value, str):
+            raise ValueError
 
 
 class DateField(Field):
-    pass
+    def validate(self, value):
+        try:
+            return datetime.datetime.strptime(value, '%d.%m.%Y')
+        except TypeError:
+            raise ValueError
 
 
 class BirthDayField(Field):
-    pass
+    def validate(self, value):
+        value = super(BirthDayField, self).clean(value)
+        delta70years = datetime.timedelta(days=70*365.25)
+        if (datetime.datetime.now() - value) > delta70years:
+            raise ValueError
+        return value
 
 
 class GenderField(Field):
-    pass
+    def validate(self, value):
+        if value not in GENDERS:
+            raise ValueError
+        return value
 
 
 class ClientIDsField(Field):
-    pass
+    def clean(self, value):
+        if not isinstance(value, list):
+            raise ValueError
+        return value
 
 
 class Request(object):
@@ -78,25 +103,30 @@ class Request(object):
         self.errors = {}
         self.base_fields = []
         self.empty_fields = []
+        self.fields = {}
+        print kwargs.items()
         for field_name, value in kwargs.items():
+
             setattr(self, field_name, value)
             self.base_fields.append(field_name)
+            self.fields[field_name] = value
             if value in ('', [], {}):
                 self.empty_fields.append(field_name)
 
     def validate(self):
-        for name, field in self.fields:
+        print self.fields
+        for name, field in self.fields.items():
             if name not in self.base_fields:
                 if field.required:
-                    self.errors[name] = 'This field is required'
+                    self.errors[name] = 'This field is requiredir d'
                     continue
-            if name in empty_fields and not field.nullable:
+            if name in self.empty_fields and not field.nullable:
                 self.errors[name] = 'This field has to be filled'
                 continue
             value = getattr(self, name)
             try:
                 field.validate(value)
-            except ValidationErrod as e:
+            except ValueError as e:
                 self.errors[name] = e.message
 
 class ClientsInterestsRequest(Request):
@@ -114,6 +144,7 @@ class OnlineScoreRequest(Request):
 
 
 class MethodRequest(Request):
+    print Request
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
@@ -123,6 +154,22 @@ class MethodRequest(Request):
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
+
+
+class ClientsInterestsProcess(object):
+    def process(self, request, context):
+        print 'in process of clients'
+        request = ClientsInterestsRequest(**request.arguments)
+        request.validate()
+        score = 100
+        return {"score": score}, OK
+
+
+class OnlineScoreProcess(object):
+    def process(self, request, context):
+        print 'in process of score'
+        request = OnlineScoreRequest(**request.arguments)
+        request.validate()
 
 
 def check_auth(request):
@@ -136,7 +183,7 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
-    response, code = None, None
+    response, code = None, 580
     handlers = {
         "clients_interests": ClientsInterestsProcess,
         "online_score": OnlineScoreProcess
@@ -145,8 +192,10 @@ def method_handler(request, ctx, store):
         method_request = MethodRequest(**request['body'])
     except:
         return 'Error in method handler'
-
-
+    print method_request
+    handler = handlers[method_request.method]()
+    print handler
+    return handler.process(method_request, ctx)
     #if online_score
     return response, code
 
@@ -172,7 +221,9 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
 
         if request:
             path = self.path.strip("/")
+            print 'in if request'
             logging.info("%s: %s %s" % (self.path, data_string, context["request_id"]))
+            print 'after logging'
             if path in self.router:
                 try:
                     response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
@@ -182,8 +233,11 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             else:
                 code = NOT_FOUND
 
+        print 'after if'
         self.send_response(code)
+        print 'after send response'
         self.send_header("Content-Type", "application/json")
+        print 'after send header'
         self.end_headers()
         if code not in ERRORS:
             r = {"response": response, "code": code}
